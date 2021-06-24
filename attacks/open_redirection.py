@@ -6,12 +6,13 @@ screen=170
 count=0
 open_redirection_list=[]
 #design function 
+
 def f(s=screen):
     #print('       ',end='')
     print(colored(' '*s,'white','on_grey',attrs=['dark']))
 
 
-def scan(url,cookies):
+def scan(url,headers):
     global count
     print(colored('\r[!] TRYING OPEN REDIRECTION VULNERABILITY LINK  -->  '+url,'white',attrs=['dark']),flush=False,end='\n')
     open_redirection_file_pointer=open('payloads/open_redirection.txt','r')
@@ -28,7 +29,7 @@ def scan(url,cookies):
             target+=op_url_parsed.fragment
             #print(colored('\r[!] TRYING OPEN REDIRECTION VULNERABILITY LINK  -->  '+target,'white',attrs=['dark']),flush=False,end='\n')
             try:
-                res=requests.get(target,cookies=cookies)
+                res=requests.get(target,headers=headers)
                 if(res.status_code!=404 and op_url_parsed.netloc not in res.url ):
                     for response in res.history:
                         if response.status_code == 301 or response.status_code == 302:

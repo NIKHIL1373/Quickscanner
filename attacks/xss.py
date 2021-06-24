@@ -6,8 +6,8 @@ from termcolor import colored
 
 
 xss_list=[] 
-def get_all_forms(url,cookies):
-    soup=bs(requests.get(url,cookies=cookies).content, "html.parser")
+def get_all_forms(url,headers):
+    soup=bs(requests.get(url,headers=headers).content, "html.parser")
     return soup.find_all("form")
 
 
@@ -57,7 +57,7 @@ def get_form_details(form):
     details["inputs"] = inputs
     return details
 
-def submit_form(form_details, url,payload,cookies):
+def submit_form(form_details, url,payload,headers):
     target_url = urljoin(url,form_details["action"])
     inputs = form_details["inputs"]
     data={}
@@ -72,16 +72,16 @@ def submit_form(form_details, url,payload,cookies):
             data[input_name]=input_value
 
     if form_details["method"] == "post":
-        return requests.post(target_url, data=data,cookies=cookies) , data 
+        return requests.post(target_url, data=data,headers=headers) , data 
 
     else:
-        return requests.get(target_url,params=data,cookies=cookies) , data
+        return requests.get(target_url,params=data,headers=headers) , data
 
-def scan_xss(url,cookies):
+def scan_xss(url,headers):
 
     global xss_list
     print(colored("[!] TRYING FOR CROSS SITE SCRIPTING INSIDE  -->  "+url,'white',attrs=['dark']),flush=False,end='\n')
-    forms = get_all_forms(url,cookies)
+    forms = get_all_forms(url,headers)
     #print(f"[+] Detected {len(forms)} forms on {url}.")
     f=open("payloads/xss.txt",'r')
     for line in f.readlines():
@@ -90,9 +90,9 @@ def scan_xss(url,cookies):
         # iterate over all forms
         for form in forms:
             form_details = get_form_details(form)
-            res,data  = submit_form(form_details, url, payload,cookies)
+            res,data  = submit_form(form_details, url, payload,headers)
             content=res.content.decode()
-            if payload in content or payload in requests.get(url,cookies=cookies).content.decode():
+            if payload in content or payload in requests.get(url,headers=headers).content.decode():
                 #print(payload)
                 print(colored("[+] XSS CROSS SITE SCRIPTING VULNERABILITY DETECTED  -->  "+str(url),'red',attrs=['bold']),colored('\n[*] FORM DATA :  '+str(data),'white',attrs=['dark','bold']))
                 xss_dict={'url':url,'method':form_details['method'],'payload':payload,'data':data}

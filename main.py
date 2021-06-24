@@ -18,10 +18,8 @@
 import os
 import re
 import sys
-import yaml
 import time
 import requests
-import builtwith
 import threading
 import urllib.request 
 from argparse import *
@@ -29,20 +27,25 @@ from attacks import sql
 from parsel import Selector
 from termcolor import colored
 from  urllib.parse import urlparse
+from bs4 import BeautifulSoup
+
 from attacks import vulnerable_default_pages as vdp
 from attacks import open_redirection as op 
 from attacks import xss
+from attacks import local_file_inclusion as lfi
+from attacks.headers_creation import prepareHeaders
+
 from report_data.generate import *
 from report_data.data import server_information
-#import report_generate as rg
 
 #define variables
 url=''
 input_url=''
-threads=1
+threads=10
 output='txt'
-cookies={}
+cookies=''
 validcookie=False
+headers = {} 
 
 #banner function
 def banner():
@@ -64,13 +67,13 @@ def helper():
 		print(colored("USAGE OF THE PROGRAM",'blue'))
 		print(colored("--------------------",'yellow'))
 		print(colored("         python3 main.py -u <url> -t <threads> -o <output> -c <cookie> -p <single_page> ",'red'))
-		print(colored("\n         Ex: python3 main.py -u http://msrit.edu (-p http://msrit.edu/index.php) -t 2 -o txt -c \"{\'phpsessionid\':\'1234\'}\" ",'green',attrs=['bold']))
+		print(colored("\n         Ex: python3 main.py -u http://msrit.edu (-p http://msrit.edu/index.php) -t 2 -o txt -c \"phpsessionid=1234\" ",'green',attrs=['bold']))
 		print(colored("\nOPTIONS",'blue'))
 		print(colored("-------",'yellow'))
 		print(colored('''        -u --url     --> URL of the target website to scan    Ex: http://website.com
 	-t --threads --> Threads  to  execute  python code    Ex: 1 2 3 
 	-o --output  --> Output  format of Report to save     Ex: txt html console default(console)
-	-c --cookie  --> Cookies after target website login   Ex: "{'key':'value','key1':'value1'}" 
+	-c --cookie  --> Cookies after target website login   Ex: "key1=value1;key2=value2	" 
 	-p --page    --> Single page checking No crawl        Ex: http://website.com/index.html ''','green'))
 		print(colored("\n\nINTERACTION",'blue'))
 		print(colored('-----------','yellow'))
@@ -101,7 +104,7 @@ def create_argument_parser():
 		parser.add_argument('-t','--threads',dest='threads',required=False,default='1')
 		parser.add_argument('-o','--output',dest='output',required=False,default='console')
 		parser.add_argument('-p','--page',dest='page',required=False,default='')
-		parser.add_argument('-c','--cookie',dest='cookies',required=False,default={},type=yaml.safe_load)
+		parser.add_argument('-c','--cookie',dest='cookies',required=False,default='')#yaml.safe_load)
 		return parser.parse_args()
 	except Exception as e:
 		print(colored(e,'red'))
@@ -155,7 +158,19 @@ def url_check():
 		print(colored(e,'red'))
 
 
-
+def dict_cookie_return(cookies):
+	cookies_dict={}
+	if(cookies==''):
+		return cookies_dict
+	else:
+		cookie_split=cookies.split(';')
+		cookies_dict={}
+		for i in cookie_split:
+			j=i.split('=')
+			k=j[0]
+			cookies_dict[k]=j[1]
+		return cookies_dict
+	
 #function to check cookie is valid or not 
 def cookie_check():
 	try:
@@ -164,13 +179,17 @@ def cookie_check():
 		global url
 		global cookies
 		global validcookie
-		response1=requests.get(input_url,cookies=cookies,timeout=5)
+		cookies_dict=dict_cookie_return(cookies)
+		response1=requests.get(input_url,cookies=cookies_dict,timeout=5)
 		response2=requests.get(input_url,timeout=5)
 		global validcookie
 		if('Content-Length' in response1.headers and 'Content-Length' in response2.headers):	
 			if not (response1.headers['Content-Length']==response2.headers['Content-Length']):
-				print(colored("[++] VALID COOKIE",'green')) 
-				validcookie=True
+				if(response1.text!=response2.text):
+					print(colored("[+] VALID COOKIE",'green'))
+					validcookie=True
+				else:
+					print(colored("[-]INVALID COOKIE",'red')) 
 			else:
 				print(colored("[-]INVALID COOKIE",'red'))
 		else:
@@ -215,6 +234,12 @@ def host_reachable():
 		print(colored('[-] TARGET IS NOT REACHABLE CHECK URL ','red'))
 		f()
 		sys.exit(0)
+
+
+
+
+
+
 #function to gather information about the Target website
 def information_gathering():
 	try:
@@ -256,17 +281,21 @@ target_links=[]
 target_photos=[]
 target_photos_dict={}
 
-def spider_links(myurl,mycookies={},first=False):
+def spider_links(myurl,cookies='',first=False):
 	global links_list , target_photos_dict
 	try:
     		if(re.match(r'http(s?).*logout.*',myurl)):
     		#if we logout from the session we will miss some pages
     			return
+    		headers=prepareHeaders(cookies)
+    		cookies_dict=dict_cookie_return(cookies)
     		if(myurl not in links_list or first==True):
-	        	response=requests.get(myurl,timeout=5,cookies=mycookies)
+	        	#response=requests.get(myurl,timeout=5,cookies=cookies_dict)
+	        	response=requests.get(myurl,timeout=5,headers=headers,cookies=cookies_dict)
+	        	#print(colored(headers,'green'))
 		        if(response.status_code!=200):
 		        	return
-		        print(colored("[*] SPIDERING [+] GOT SOME PAGE  -->  "+myurl,'green'))
+		        print(colored("[+] SPIDERING     GOT SOME PAGE  -->  "+myurl,'green'))
 		        links_list.append(myurl)
 		        if(page==myurl):
 		        	return
@@ -280,9 +309,14 @@ def spider_links(myurl,mycookies={},first=False):
 		        		temp.append(i)
 		        if(temp!=[]):
 		        	target_photos_dict[myurl]=temp
-		       # print(target_photos_dict	)
+		       #print(target_photos_dict	)
 		        links=list(set(links))
+		        #print(colored(links,'blue'))
+		        #print(response.url)
+		        #print(colored(BeautifulSoup(response.content),'yellow'))
 		        for link in links:
+		        	if('DVWA' in link):
+		        		print(link)
 		        	if(len(link)<=0):
 		        		continue
 		        	#link=link.strip('/')
@@ -302,7 +336,7 @@ def spider_links(myurl,mycookies={},first=False):
 		        		#illgeal to do crawl on .in websites
 		        		print(colored('[-].IN WEBSITE GOT SKIP          -->  '+link,'white',attrs=['dark']))
 		        		continue
-		        	if re.match(r'http(s?).*\.pdf',link) or re.match(r'http(s?).*\.pdf',link):
+		        	if re.match(r'http(s?).*\.pdf',link) or re.match(r'http(s?).*\.PDF',link) or '.pdf' in link:
 		        		#If we got pdf link then no crawl
 		        		print(colored('[-].PDF FILE GOT SKIP            -->  '+link,'white',attrs=['dark']))
 		        		continue
@@ -329,6 +363,9 @@ def spider_links(myurl,mycookies={},first=False):
 		        			link=url+link
 		        		
 		        		else:
+		        			#print('url --> ',url)
+		        			#print('response_url --> ',response.url)
+		        			#print('link --> ',link)
 			        		u_link_parse=urlparse(response.url).path
 			        		u_link_parse=u_link_parse.lstrip('/')
 			        		u_link_parse=u_link_parse.split('/')
@@ -340,7 +377,7 @@ def spider_links(myurl,mycookies={},first=False):
 			        				link=url+'/'+link
 			        			elif(counter>=2):
 			        				temp_link=url
-			        				for i in range(counter-1):
+			        				for i in range(counter-2):
 			        					temp_link+='/'+u_link_parse[i]
 			        				link=temp_link+'/'+link
 			        		elif(count==0 or count==1):
@@ -355,7 +392,7 @@ def spider_links(myurl,mycookies={},first=False):
 		        		#if it is already crawled then no need to do once more
 		        		continue
 		        	print(colored('[*] SPIDER FOR LINK              -->  '+link,'yellow'))
-		        	spider_links(link,mycookies)
+		        	spider_links(link,cookies)
 	except Exception as e:
 		print(colored(e,'red'))
 		print(colored(links,'blue'))
@@ -427,7 +464,7 @@ def main():
 		print(colored('[*] CHECKING TARGET IS REACHABLE OR NOT','yellow'))
 		host_reachable()
 		f()
-		if not (cookies=={}):
+		if not (cookies==''):
 			print(colored("[*] CHECKING VALID COOKIE OR NOT ",'yellow'))
 			cookie_check()
 			f()
@@ -436,7 +473,7 @@ def main():
 		f()
 		print(colored('[!] DO YOU WANT TO CRAWL THE WEBSITE FROM GIVEN URL TYPE [Y/n]','blue'),end='\n')
 		yes_or_no=input()
-		print(colored('[!] DO YOU WANT TO CRAWL THE WEBSITE FROM '+url+' INDEX PAGE TYPE [y/N]','blue'),end='\n')
+		print(colored('[!] DO YOU WANT TO CRAWL THE WEBSITE FROM THIS URL '+url+'  [y/N]','blue'),end='\n')
 		yes_or_no_index_crawl=input()
 		if(yes_or_no_index_crawl=='Y' or yes_or_no_index_crawl=='y'):
 			print(colored('[*] SPIDERING AND WEB CRAWLING THE TARGET WEBSITE','yellow'))
@@ -472,6 +509,7 @@ def main():
 			f()
 		try:
 			try:
+				print(colored('[!] NEXT MODULE CHECKING FOR SQL INJECTION ','yellow'))
 				print(colored('[!] DO YOU WANT TO CHECK FOR SQL INJECTION TYPE [Y/n]','blue'),end='\n')
 				yes_or_no=input()
 				if(yes_or_no=='Y'or yes_or_no=='' or yes_or_no=='y'):
@@ -480,63 +518,125 @@ def main():
 					try:
 						for i in target_links:
 							u=urlparse(i)
+							headers=prepareHeaders(cookies)
 							if(len(u.path)==0):
 								continue
-							t=threading.Thread(target=sql.scan_sql_injection,args=(i,cookies))
+							t=threading.Thread(target=sql.scan_sql_injection,args=(i,headers))
 							t.start()
+						try:
+							time.sleep(2)
+							print(colored('\r[*] WAITING FOR THREADS TO COMPLETE TASK','magenta',attrs=['bold']),end='')
+							time.sleep(2)
+						except:
+							pass
 					except:
 						pass
 			except KeyboardInterrupt:
 				f(screen-2)
 				print(colored('[-] KEYBOARD INTERRUPT CTRL+ C PRESSED DURING SQL INJECTION CHECKING','red',attrs=['bold']))
-			try:
-				time.sleep(2)
-				#t.join()
-			except:
-				pass
-			#print('\r',flush=True,end='')
+			except Exception as e:
+				print(colored(e,'red'))	
+			print('\r',flush=True,end='')
 			f()
 			try:
+				print(colored('[!] NEXT MODULE CHECKING FOR CROSS SITE SCRIPTING VULNEARBILITY ','yellow'))
 				print(colored('[!] DO YOU WANT TO CHECK FOR CROSS SITE SCRIPTING VULNEARBILITY  [Y/n]','blue'),end='\n')
 				yes_or_no=input()
 				if(yes_or_no=='Y' or yes_or_no=='' or yes_or_no=='y'):
 					print(colored('[*] CHECKING TARGET WEBSITES FOR CROSS SITE SCRIPTING ','yellow'))
 					for i in target_links:
-						xss.scan_xss(i,cookies)
+						headers=prepareHeaders(cookies)
+						t=threading.Thread(target=xss.scan_xss,args=(i,headers))
+						t.start()
+					try:
+						time.sleep(1)
+						print(colored('\r[*] WAITING FOR THREADS TO COMPLETE TASK','magenta',attrs=['bold']),end='')
+						time.sleep(2)
+					except:
+						pass	
 			except KeyboardInterrupt:
 				f(screen-2)
 				print(colored('[-] KEYBOARD INTERRUPT CTRL+ C PRESSED DURING XSS CHECKING','red',attrs=['bold']))
+			except Exception as e:
+				print(colored(e,'red'))	
+			print('\r',flush=True,end='')
 			f()
 			try:
-				print(colored('[!] NEXT IS CHECKING FOR SERVER MISCONFIGURATIONS ','yellow'))
+				print(colored('[!] NEXT MODULE CHECKING FOR SERVER MISCONFIGURATIONS ','yellow'))
 				print(colored('[!] DO YOU WANT TO CHECK FOR DEFAULT VULNEARBLE WEB PAGES TYPE [Y/n]','blue'),end='\n')
 				yes_or_no=input()
 				if(yes_or_no=='Y' or yes_or_no=='' or yes_or_no=='y'):
 					print(colored('[*] CHEKING TARGET WEBSITE FOR DEFAULT VULNEARBLE PAGES','yellow'))
-					vdp.vulnerable_pages(url)
+					headers=prepareHeaders(cookies)
+					vdp.vulnerable_pages(url,headers)
+					try:
+						time.sleep(0.5)
+						print(colored('\r[*] WAITING FOR THREADS TO COMPLETE TASK','magenta',attrs=['bold']),end='')
+						time.sleep(2)
+					except:
+						pass
 					#print('\r',flush=True,end='')
-					f()
-				else:
-					f()
 			except KeyboardInterrupt:
 				f(screen-2)
 				print(colored('[-] KEYBOARD INTERRUPT CTRL+ C PRESSED DURING VULNEARBLE PAGES CHECKING ','red',attrs=['bold']))
-				f()
+			except Exception as e:
+				print(colored(e,'red'))	
+			print('\r',flush=True,end='')
+			f()
 			try:
+				print(colored('[!] NEXT MODULE CHECKING FOR OPEN REDIRECTION VULNEARBILITY ','yellow'))
 				print(colored('[!] DO YOU WANT TO CHECK FOR OPEN REDIRECTION [Y/n]','blue'),end='\n')
 				yes_or_no=input()
 				if(yes_or_no=='Y' or yes_or_no=='' or yes_or_no=='y'):
 					print(colored('[*] CHECKING TARGET WEBSITES FOR OPEN REDIRECTION ','yellow'))
 					for i in target_links:
 						if(urlparse(i).query):
-							break_yes_no=op.scan(i,cookies)
+							headers=prepareHeaders(cookies)
+							t=threading.Thread(target=op.scan,args=(i,headers))
+							break_yes_no=t.start()
 							if(break_yes_no=='quit'):
 								break
+					try:
+						time.sleep(0.5)
+						print(colored('\r[*] WAITING FOR THREADS TO COMPLETE TASK','magenta',attrs=['bold']),end='')
+						time.sleep(2)
+					except:
+						pass
 				#print('\r',flush=True,end='')
-				f()
 			except KeyboardInterrupt:
 				f(screen-2)
 				print(colored('[-] KEYBOARD INTERRUPT CTRL+ C PRESSED DURING OPEN REDIRECTION CHECKING ','red',attrs=['bold']))
+			except Exception as e:
+				print(colored(e,'red'))	
+			print('\r',flush=True,end='')
+			f()
+			try:
+				print(colored('[!] NEXT MODULE CHECKING FOR LOCAL FILE INCLUSION VULNEARBILITY ','yellow'))
+				print(colored('[!] DO YOU WANT TO CHECK FOR LOCAL FILE INCLUSION [Y/n]','blue'),end='\n')
+				yes_or_no=input()
+				if(yes_or_no=='Y' or yes_or_no=='' or yes_or_no=='y'):
+					headers=prepareHeaders(cookies)
+					print(colored('[*] CHECKING TARGET WEBSITES FOR LOCAL FILE INCLUSION  ','yellow'))
+					for i in target_links:
+						if(urlparse(i).query):
+							t=threading.Thread(target=lfi.main,args=(i,headers))
+							break_yes_no=t.start()
+							if(break_yes_no=='quit'):
+								break
+					try:
+						time.sleep(2)
+						print(colored('\r[*] WAITING FOR THREADS TO COMPLETE TASK','magenta',attrs=['bold']),end='')
+						time.sleep(2)
+					except:
+						pass
+				#print('\r',flush=True,end='')
+			except KeyboardInterrupt:
+				f(screen-2)
+				print(colored('[-] KEYBOARD INTERRUPT CTRL+ C PRESSED DURING OPEN REDIRECTION CHECKING ','red',attrs=['bold']))
+			except Exception as e:
+				print(colored(e,'red'))
+			print('\r',flush=True,end='')
+			f()
 		except Exception as e:
 			print(colored(e,'red'))
 	except KeyboardInterrupt:
@@ -561,18 +661,22 @@ if __name__=='__main__':
 			sys.exit(0)
 		else:
 			page=parser.page
+			#print(page)
 			if(page!=''):
 				url=page
 				input_url=page
+				input_url=input_url.rstrip('/')
 				if(page[-1]=='/'):
 					page=page[:-1]
 			else:
 				url=parser.url
 				input_url=url
+				input_url=input_url.rstrip('/')
 				urlparsed=urlparse(url)
 				url=urlparsed.scheme+'://'+urlparsed.netloc
 			if (url[-1]=='/'):
 				url=url[:-1]
+			#print('url --> ',url)
 			if(parser.threads.isnumeric()==False):
 				print(colored("[-] Enter threads in digits \n",'red'))
 				helper()
@@ -583,6 +687,8 @@ if __name__=='__main__':
 				sys.exit(0)
 			output=parser.output
 			cookies=parser.cookies
+			headers=prepareHeaders(cookies)
+			
 		main()
 		print(colored('\r[!] DO YOU WANT TO CREATE REPORT [Y/n]','blue'),end='\n')
 		yes_or_no=input()
@@ -592,8 +698,9 @@ if __name__=='__main__':
 			create_photos_links()
 			create_internet_photos_links()
 			create_main_report()
+			#merge_pdf()
+			print(colored('[+] GENERATED REPORT SUCCESSFULLY (Inside ./report/)','green',attrs=['bold']))
 		end_time=time.time()
-		print(colored('[+] GENERATED REPORT SUCCESSFULLY (Inside ./report/)','green',attrs=['bold']))
 		f()
 		print(colored('\r[!] DO YOU WANT TO OPEN REPORT [Y/n]','blue'),end='\n')
 		yes_or_no=input()
